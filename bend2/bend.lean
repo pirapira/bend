@@ -186,10 +186,18 @@ namespace BendCore
 -- §1 Types (== bend.ts Types)
 -- ============================================================================
 
+-- Bang is bend.ts's ! (its THEORY note): a binder reusable at any kind,
+-- whose argument is closed. Here it is inert: no rule of this file binds
+-- it (Quant.le x Bang holds only at x = None, so a lam or let closes a !
+-- binder only unused), no literal spells it (Check.qua), and a ! field asks
+-- Data of its domain (Quant.data); so every claim below holds with Bang in
+-- the type and none reads it. bang.lean states the judgment with the !
+-- rules and what is proved of it
 inductive Quant : Type
   | None
   | Lone
   | Many
+  | Bang
 deriving DecidableEq
 
 abbrev Uses := Nat → Quant
@@ -277,8 +285,8 @@ def Quant.add : Quant → Quant → Quant
 def Quant.join : Quant → Quant → Quant
   | .None, q     => q
   | .Lone, .None => .Lone
-  | .Lone, q     => q
-  | .Many, _     => .Many
+  | .Lone, .Lone => .Lone
+  | _,     _     => .Many
 
 -- a match field binds at field times scrutinee: a + field under a Lone
 -- holder is Many (bend.ts quant_mul)
@@ -286,19 +294,29 @@ def Quant.mul : Quant → Quant → Quant
   | .None, _ => .None
   | .Lone, x => x
   | .Many, x => Quant.add x x
+  | .Bang, _ => .Bang
 
 def Quant.le : Quant → Quant → Prop
   | .None, _     => True
+  | _,     .Bang => False
   | .Lone, .None => False
   | .Lone, _     => True
   | .Many, .Many => True
   | .Many, _     => False
+  | .Bang, _     => False
 
 -- the demand on an argument: an erased binder kills the demand, any other
 -- binder passes the ambient demand through (bend.ts quant_dem)
 def Quant.dem : Quant → Quant → Quant
   | .None, _  => .None
   | _,     qt => qt
+
+-- the kind a constructor field of quantity q asks of its domain when it is
+-- not the family's own: a ! field asks Data, as a + field does (bend.ts
+-- refuses a ! field outright; here it is inert: bound only unused)
+def Quant.data : Quant → Quant
+  | .Bang => .Many
+  | q     => q
 
 -- ============================================================================
 -- §3 Uses (== bend.ts Uses)
@@ -823,10 +841,10 @@ inductive Check (β : Book) (Φ : Pol) :
   | typ : Check β Φ L [] .None Γ g .Qnt πg .Qnt →
           Check β Φ L sp q Γ (.Typ g) (.Typ (.Qua .Lone)) Uses.zero
             (Term.era q (.Typ .Qnt))
-  -- ------------------------- infer-qnt
-  -- Γ ⊢ Quant : Type ~ {}      Γ ⊢ &q : Quant ~ {}
+  -- ------------------------- infer-qnt (no literal spells !: a ! is a
+  -- Γ ⊢ Quant : Type ~ {}      Γ ⊢ &q : Quant ~ {}     binder's mark only)
   | qnt : Check β Φ L sp q Γ .Qnt (.Typ (.Qua .Lone)) Uses.zero .Qnt
-  | qua : Check β Φ L sp q Γ (.Qua q') .Qnt Uses.zero (Term.era q (.Qua q'))
+  | qua : q' ≠ .Bang → Check β Φ L sp q Γ (.Qua q') .Qnt Uses.zero (Term.era q (.Qua q'))
   -- Γ ⊢ a : Quant ~ πa    Γ ⊢ b : Quant ~ πb    (both at the ambient demand)
   -- ------------------------------------------------ infer-min
   -- Γ ⊢ a <&> b : Quant ~ πa + πb
@@ -953,7 +971,7 @@ inductive TeleQs (β : Book) : Term → Nat → List Quant → Prop
 def CtrOk (β : Book) (k pn : Nat) (G : Term) : Ctx → Nat → Term → Prop
   | Γ, i, .All q A B =>
       (∃ π, Check β (Pol.std β) ⟨k, .Ref k, 0, []⟩ [] .None Γ A
-        (.Typ (if pn ≤ i ∧ q = .Lone then Term.shiftN (i - pn) G else .Qua q)) π .Qnt) ∧
+        (.Typ (if pn ≤ i ∧ q = .Lone then Term.shiftN (i - pn) G else .Qua (Quant.data q))) π .Qnt) ∧
       CtrOk β k pn G (⟨q, A, none⟩ :: Γ) (i + 1) B
   | _, _, _ => True
 
@@ -5002,7 +5020,7 @@ theorem Check.at_none (h : Check β Φ L sp q Γ t T π u) :
   | ctr hk hc hr => exact ⟨_, _, .ctr hk hc hr⟩
   | typ hg => exact ⟨_, _, .typ hg⟩
   | qnt => exact ⟨_, _, .qnt⟩
-  | qua => exact ⟨_, _, .qua⟩
+  | qua hq => exact ⟨_, _, .qua hq⟩
   | min _ _ iha ihb =>
     obtain ⟨_, _, ha⟩ := iha
     obtain ⟨_, _, hb⟩ := ihb
@@ -5098,7 +5116,7 @@ theorem Check.void_sp (h : Check β Φ L sp q Γ t T π u) :
   | ctr hk hc hr => intro sp'; exact .ctr hk hc hr
   | typ _ ihg => intro sp'; exact .typ (ihg [])
   | qnt => intro sp'; exact .qnt
-  | qua => intro sp'; exact .qua
+  | qua hq => intro sp'; exact .qua hq
   | min _ _ iha ihb => intro sp'; exact .min (iha []) (ihb [])
   | all _ _ ihA ihB => intro sp'; exact .all (ihA []) (ihB [])
   | lam _ _ hle ihA ihf => intro sp'; exact .lam (ihA []) (ihf []) hle
@@ -5603,6 +5621,10 @@ theorem Quant.join_eq_none : ∀ {a b : Quant}, Quant.join a b = .None → a = .
 theorem Quant.dem_ne_many : ∀ {q' q : Quant}, q ≠ .Many → Quant.dem q' q ≠ .Many := by
   intro q' q h; cases q' <;> cases q <;> simp_all [Quant.dem]
 
+theorem Quant.dem_ne_mb : ∀ {q' q : Quant}, q ≠ .Many ∧ q ≠ .Bang →
+    Quant.dem q' q ≠ .Many ∧ Quant.dem q' q ≠ .Bang := by
+  intro q' q h; cases q' <;> cases q <;> simp_all [Quant.dem]
+
 -- shift and subst transport for the mat premises
 theorem Insts.shift (h : Insts T ps T') (d : Nat) :
     Insts (T.shift d) (ps.map (Term.shift d)) (T'.shift d) := by
@@ -5754,7 +5776,7 @@ theorem Check.weaken (hβ : Book.Closed β) (hΦ : Φ.Weak) {sp : List Term}
   | ctr hk hc hr => exact .ctr hk hc hr
   | typ _ ihg => exact .typ ihg
   | qnt => exact .qnt
-  | qua => exact .qua
+  | qua hq => exact .qua hq
   | min _ _ iha ihb => exact .min iha ihb
   | all _ _ ihA ihB => exact .all ihA ihB
   | lam _ _ hle ihA ihf => exact .lam ihA ihf hle
@@ -5851,7 +5873,7 @@ theorem Check.ins (hβ : Book.Closed β) (hΦ : Φ.Weak) {sp : List Term}
     rw [Uses.lift_zero, Term.shift_era]
     exact .typ (ihg hins [])
   | qnt => intro n U Γ' hins sp'; rw [Uses.lift_zero]; exact .qnt
-  | qua => intro n U Γ' hins sp'; rw [Uses.lift_zero, Term.shift_era]; exact .qua
+  | qua hq => intro n U Γ' hins sp'; rw [Uses.lift_zero, Term.shift_era]; exact .qua hq
   | min _ _ iha ihb =>
     intro n U Γ' hins sp'
     rw [Uses.lift_add, Term.shift_era]
@@ -6039,7 +6061,7 @@ theorem Check.subst (hβ : Book.Closed β) (hΦ : Φ.Weak) {sp : List Term}
     (hw : Term.Closed 0 w) (huw : Term.Closed 0 uw) (hv : b0.v = none ∨ b0.v = some w)
     (h0 : Check β Φ (LHS.void β) [] .None [] w b0.T Uses.zero .Qnt)
     (hefq : ∀ Γ, Φ.efq (Γ ++ [b0]) → Φ.efq (Ctx.substLast w Γ)) :
-    ∀ (Γ : Ctx), Γb = Γ ++ [b0] → q ≠ .Many →
+    ∀ (Γ : Ctx), Γb = Γ ++ [b0] → q ≠ .Many ∧ q ≠ .Bang →
     (π Γ.length ≠ .None → ∃ πw, Check β Φ (LHS.void β) [] .Lone [] w b0.T πw uw) →
     Check β Φ (LHS.void β) sp q (Ctx.substLast w Γ) (Term.subst Γ.length w t)
       (Term.subst Γ.length w T) (Uses.del Γ.length π) (Term.subst Γ.length uw u) := by
@@ -6074,7 +6096,8 @@ theorem Check.subst (hβ : Book.Closed β) (hΦ : Φ.Weak) {sp : List Term}
         obtain ⟨πw, hw1⟩ := h1 (by simp [Uses.one])
         have := hw1.weaken_closed hβ hΦ (Ctx.substLast w Γ) sp
         rwa [Ctx.substLast_length, hw1.closed_uses] at this
-      | Many => exact absurd _root_.rfl hq
+      | Many => exact absurd _root_.rfl hq.1
+      | Bang => exact absurd _root_.rfl hq.2
   | ref hk _ _ =>
     intro Γ hΓ hq h1
     rw [Term.subst_closed _ 0 _ w (hβ.defn hk).1 (Nat.zero_le _), Uses.del_zero, Term.subst_era]
@@ -6098,7 +6121,7 @@ theorem Check.subst (hβ : Book.Closed β) (hΦ : Φ.Weak) {sp : List Term}
     rw [Uses.del_zero, Term.subst_era]
     exact .typ (ihg Γ hΓ (by simp) (fun hne => absurd (hg.none_at _) hne))
   | qnt => intro Γ hΓ hq h1; rw [Uses.del_zero]; exact .qnt
-  | qua => intro Γ hΓ hq h1; rw [Uses.del_zero, Term.subst_era]; exact .qua
+  | qua hq' => intro Γ hΓ hq h1; rw [Uses.del_zero, Term.subst_era]; exact .qua hq'
   | min _ _ iha ihb =>
     intro Γ hΓ hq h1
     rw [Uses.del_add, Term.subst_era]
@@ -6126,7 +6149,7 @@ theorem Check.subst (hβ : Book.Closed β) (hΦ : Φ.Weak) {sp : List Term}
     have hf' := ihf Γ _root_.rfl hq (fun hne => h1 (fun he => hne (Quant.add_eq_none he).1))
     simp only [Term.subst, hw0] at hf'
     exact .app (hf'.sp _)
-      (ihx Γ _root_.rfl (Quant.dem_ne_many hq) (fun hne => h1 (fun he => hne (Quant.add_eq_none he).2)))
+      (ihx Γ _root_.rfl (Quant.dem_ne_mb hq) (fun hne => h1 (fun he => hne (Quant.add_eq_none he).2)))
   | appLam ha _ ih =>
     intro Γ hΓ hq h1
     subst hΓ
@@ -6146,7 +6169,7 @@ theorem Check.subst (hβ : Book.Closed β) (hΦ : Φ.Weak) {sp : List Term}
       (fun hne => h1 (fun he => hne (Quant.add_eq_none he).2))
     simp only [List.length_cons, Ctx.substLast, Bind.substAt, Option.map_some,
       Term.subst_shift0_closed hw] at hb'
-    refine .let_ (ihv Γ _root_.rfl (Quant.dem_ne_many hq)
+    refine .let_ (ihv Γ _root_.rfl (Quant.dem_ne_mb hq)
       (fun hne => h1 (fun he => hne (Quant.add_eq_none he).1)))
       (ihA Γ _root_.rfl (by simp) (fun hne => absurd (hA.none_at _) hne)) hb' ?_
     rw [Uses.del_head]; exact hle
@@ -6197,7 +6220,7 @@ theorem Check.subst (hβ : Book.Closed β) (hΦ : Φ.Weak) {sp : List Term}
 -- binding that justified an Efq (hdead), as no derivation survives that
 theorem Check.subst_std (hβ : Book.Closed β) {sp : List Term}
     (h : Check β (Pol.std β) L sp q (Γ ++ [b0]) t T π u)
-    (hq : q ≠ .Many) (hw : Term.Closed 0 w) (huw : Term.Closed 0 uw)
+    (hq : q ≠ .Many ∧ q ≠ .Bang) (hw : Term.Closed 0 w) (huw : Term.Closed 0 uw)
     (hv : b0.v = none ∨ b0.v = some w)
     (h0 : Check β (Pol.std β) (LHS.void β) [] .None [] w b0.T Uses.zero .Qnt)
     (h1 : π Γ.length ≠ .None →
@@ -6300,6 +6323,14 @@ theorem Check.qua_inv (hΦ : Pol.Pre Φ) {sp : List Term} (h : Check β Φ L sp 
   case cnv _ hc ih =>
     obtain ⟨hcv, hπ, hu⟩ := ih he
     exact ⟨hΦ.trans hcv hc, hπ, hu⟩
+
+-- no literal spells !
+theorem Check.qua_ne_bang {sp : List Term} (h : Check β Φ L sp q Γ (.Qua q') T π u) :
+    q' ≠ .Bang := by
+  generalize he : Term.Qua q' = t0 at h
+  induction h <;> try exact Term.noConfusion he
+  case qua hq => cases he; exact hq
+  case cnv _ _ ih => exact ih he
 
 theorem Check.min_inv (hΦ : Pol.Pre Φ) {sp : List Term} (h : Check β Φ L sp q Γ (.Min a b) T π u) :
     ∃ πa ua πb ub, Check β Φ L [] q Γ a .Qnt πa ua ∧ Check β Φ L [] q Γ b .Qnt πb ub ∧
@@ -7335,7 +7366,9 @@ theorem Check.value_head (hok : Book.Ok β) (hq : q ≠ .None) {sp : List Term}
         fun hb => hnb (.minL hb)).at_qnt hβ (Le.refl _)
       obtain ⟨qb, rfl⟩ := (ih _ (by simp only [Term.size] at hn; omega) hvb hb
         fun hb => hnb (.minR hb)).at_qnt hβ (Le.refl _)
-      cases qa <;> cases qb <;> simp at hna1 hna2 hnb1 hnb2 hnab
+      have hqa := ha.qua_ne_bang
+      have hqb := hb.qua_ne_bang
+      cases qa <;> cases qb <;> simp at hna1 hna2 hnb1 hnb2 hnab hqa hqb
     | rwt hve hne he =>
       exact absurd ((ih _ (Nat.le_of_lt_succ (Nat.lt_of_lt_of_le (Term.size_rwt _ _ _ _) hn)) hve he
         fun hb => hnb (.rwt hb)).at_eql hβ (Le.refl _)) hne
@@ -7966,7 +7999,7 @@ theorem Check.red_bind (hβ : Book.Closed β) {sp : List Term}
   | ctr hk hc hr => intro Γ' _; exact .ctr hk hc hr
   | typ _ ihg => intro Γ' hΓ; exact .typ (ihg _ hΓ)
   | qnt => intro Γ' _; exact .qnt
-  | qua => intro Γ' _; exact .qua
+  | qua hq => intro Γ' _; exact .qua hq
   | min _ _ iha ihb => intro Γ' hΓ; exact .min (iha _ hΓ) (ihb _ hΓ)
   | all _ _ ihA ihB => intro Γ' hΓ; exact .all (ihA _ hΓ) (ihB _ (.rigid hΓ))
   | lam _ _ hle ihA ihf => intro Γ' hΓ; exact .lam (ihA _ hΓ) (ihf _ (.rigid hΓ)) hle
@@ -8053,7 +8086,7 @@ theorem Check.step (hok : Book.Ok β) (hE : Book.Era β 0 β βe)
     obtain ⟨πa, ua, πb, ub, ha, hb, hle, -, hu⟩ := h.min_inv hΦ
     obtain ⟨-, -, hua⟩ := ha.qua_inv hΦ
     subst hu hua
-    exact ⟨_, _, Check.qua.cnv hle, .inl .minLN⟩
+    exact ⟨_, _, (Check.qua (by decide)).cnv hle, .inl .minLN⟩
   | minRM =>
     intro T π h
     obtain ⟨πa, ua, πb, ub, ha, hb, hle, -, hu⟩ := h.min_inv hΦ
@@ -8065,14 +8098,14 @@ theorem Check.step (hok : Book.Ok β) (hE : Book.Era β 0 β βe)
     obtain ⟨πa, ua, πb, ub, ha, hb, hle, -, hu⟩ := h.min_inv hΦ
     obtain ⟨-, -, hub⟩ := hb.qua_inv hΦ
     subst hu hub
-    exact ⟨_, _, Check.qua.cnv hle, .inl .minRN⟩
+    exact ⟨_, _, (Check.qua (by decide)).cnv hle, .inl .minRN⟩
   | minLL =>
     intro T π h
     obtain ⟨πa, ua, πb, ub, ha, hb, hle, -, hu⟩ := h.min_inv hΦ
     obtain ⟨-, -, hua⟩ := ha.qua_inv hΦ
     obtain ⟨-, -, hub⟩ := hb.qua_inv hΦ
     subst hu hua hub
-    exact ⟨_, _, Check.qua.cnv hle, .inl .minLL⟩
+    exact ⟨_, _, (Check.qua (by decide)).cnv hle, .inl .minLL⟩
   | min_a _ ih =>
     intro T π h
     obtain ⟨πa, ua, πb, ub, ha, hb, hle, -, hu⟩ := h.min_inv hΦ
@@ -9342,6 +9375,7 @@ theorem Check.occ_le {sp : List Term} (h : Check β Φ L sp q Γ t T π u) (hi :
   · simp [h.occ_none hq]
   · exact h.occ_lone hq
   · rw [hq] at hi; exact hi.elim
+  · rw [hq] at hi; exact hi.elim
 
 -- ----------------------------------------------------------------------------
 -- N3c (i) — the strategy: the deterministic weak reduction the engine runs
@@ -9699,7 +9733,7 @@ theorem Check.mono (hc : ∀ x y, Φ.conv x y → Φ'.conv x y) (he : ∀ Γ, Φ
   | ctr hk hC hr => exact .ctr hk hC hr
   | typ _ ihg => exact .typ ihg
   | qnt => exact .qnt
-  | qua => exact .qua
+  | qua hq => exact .qua hq
   | min _ _ iha ihb => exact .min iha ihb
   | all _ _ ihA ihB => exact .all ihA ihB
   | lam _ _ hle ihA ihf => exact .lam ihA ihf hle
@@ -9785,7 +9819,7 @@ theorem WTele.isTele : ∀ {pn : Nat} {ps : List Term} {T : Term}, WTele a r ps 
 def CtrOkD (β : Book) (Φ : Pol) (pn : Nat) (G : Term) : Ctx → Nat → Term → Prop
   | Γ, i, .All q A B =>
       (∃ π, Check β Φ (LHS.void β) [] .None Γ A
-        (if pn ≤ i ∧ q = .Lone then .Typ (Term.shiftN (i - pn) G) else .Typ (.Qua q)) π .Qnt) ∧
+        (if pn ≤ i ∧ q = .Lone then .Typ (Term.shiftN (i - pn) G) else .Typ (.Qua (Quant.data q))) π .Qnt) ∧
       CtrOkD β Φ pn G (⟨q, A, none⟩ :: Γ) (i + 1) B
   | _, _, _ => True
 
@@ -9807,9 +9841,9 @@ theorem CtrOkD.substLast (hβ : Book.Closed β) (hΦ : Φ.Weak)
       (fun h => absurd (hA.none_at _) h)
     have hK : Term.subst Γ.length w
         (if pn ≤ Γ.length + 1 ∧ q = .Lone then .Typ (Term.shiftN (Γ.length + 1 - pn) G) else .Typ
-            (.Qua q))
+            (.Qua (Quant.data q)))
         = (if pn' ≤ Γ.length ∧ q = .Lone then .Typ (Term.shiftN (Γ.length - pn') G') else .Typ
-            (.Qua q)) := by
+            (.Qua (Quant.data q))) := by
       rcases hcase with ⟨rfl, rfl, rfl⟩ | ⟨pk, hpn, hpn', hG'⟩
       · split <;> rename_i h1 <;> split <;> rename_i h2
         · show Term.Typ _ = Term.Typ _
@@ -9922,7 +9956,7 @@ theorem CtrOkD.fields_qs (hβ : Book.Closed β) (hΦ : Φ.Weak)
     ∀ (j : Nat) x u, xs[j]? = some x → us[j]? = some u →
       ∃ qf F πx, (Term.allQs fn TS)[j]? = some qf ∧ Check β (Pol.std β) L [] (Quant.dem qf q) [] x
           F πx u ∧
-        ∃ π, Check β Φ (LHS.void β) [] .None [] F (if qf = .Lone then .Typ G' else .Typ (.Qua qf))
+        ∃ π, Check β Φ (LHS.void β) [] .None [] F (if qf = .Lone then .Typ G' else .Typ (.Qua (Quant.data qf)))
             π .Qnt := by
   intro xs
   induction xs with
@@ -10147,7 +10181,7 @@ theorem Check.sstep_gen (hok : Book.Ok β) (hE : Book.Era β 0 β βe)
       by_cases h2 : ua = Term.Qua .None
       · subst h2
         exact ⟨_, _, _, (Red.min_a (Check.qua_red hok ha)).trans (Red.one .minLN), .minLN,
-            Check.qua⟩
+            Check.qua (by decide)⟩
       by_cases hdb : Deep β ub
       · by_cases h3 : ub = Term.Qua .Many
         · subst h3
@@ -10156,11 +10190,11 @@ theorem Check.sstep_gen (hok : Book.Ok β) (hE : Book.Era β 0 β βe)
         by_cases h4 : ub = Term.Qua .None
         · subst h4
           exact ⟨_, _, _, (Red.min_b (Check.qua_red hok hb)).trans (Red.one .minRN), .minRN,
-              Check.qua⟩
+              Check.qua (by decide)⟩
         by_cases h5 : ua = Term.Qua .Lone ∧ ub = Term.Qua .Lone
         · obtain ⟨rfl, rfl⟩ := h5
           exact ⟨_, _, _, (Red.min_a (Check.qua_red hok ha)).trans
-            ((Red.min_b (Check.qua_red hok hb)).trans (Red.one .minLL)), .minLL, Check.qua⟩
+            ((Red.min_b (Check.qua_red hok hb)).trans (Red.one .minLL)), .minLL, Check.qua (by decide)⟩
         · exact absurd (Deep.min hda h1 h2 hdb h3 h4 h5) hnd
       · obtain ⟨b', ub', πb', rb, sb, hb'⟩ := ihb _root_.rfl _root_.rfl _root_.rfl hdb
         exact ⟨_, _, _, Red.min_b rb, .min_b (hda.era hE) sb, Check.min ha hb'⟩
@@ -10496,8 +10530,8 @@ theorem Check.data_deep_aux (hok : Book.Ok β) (hP : DataPol β Φ)
           | Lone =>
             simp only [if_true] at hKF
             exact ih (by omega) hx (hKF.cnv (hP.kind _ hKle)) hdu
-          | Many =>
-            simp only [reduceCtorEq, if_false] at hKF
+          | Many | Bang =>
+            simp only [reduceCtorEq, if_false, Quant.data] at hKF
             exact ih (by omega) hx hKF hdu
       refine ⟨fun β' => ?_, fun β' => ?_⟩
       · exact CG.apps (.ctr) (CGs.of_forall fun u hu => (hall u hu).1 β')
@@ -11296,7 +11330,7 @@ theorem Check.substD (hβ : Book.Closed β) {sp : List Term} {b : Bind} {Γ₁ :
     intro Γ₂ hΓ hq
     exact Check.zero_of_none (Check.typ (ihg Γ₂ hΓ _root_.rfl)) hq
   | qnt => intro Γ₂ hΓ hq; exact Check.qnt
-  | qua => intro Γ₂ hΓ hq; exact Check.zero_of_none Check.qua hq
+  | qua hq' => intro Γ₂ hΓ hq; exact Check.zero_of_none (Check.qua hq') hq
   | min _ _ iha ihb =>
     intro Γ₂ hΓ hq
     exact Check.zero_of_none (Check.min (iha Γ₂ hΓ hq) (ihb Γ₂ hΓ hq)) hq
@@ -11558,7 +11592,7 @@ theorem Check.cv (hβ : Book.Closed β) {sp : List Term}
   | ctr hk hc hr => intro Γ' _; exact .ctr hk hc hr
   | typ _ ihg => intro Γ' hΓ; exact .typ (ihg _ hΓ)
   | qnt => intro Γ' _; exact .qnt
-  | qua => intro Γ' _; exact .qua
+  | qua hq => intro Γ' _; exact .qua hq
   | min _ _ iha ihb => intro Γ' hΓ; exact .min (iha _ hΓ) (ihb _ hΓ)
   | all _ _ ihA ihB => intro Γ' hΓ; exact .all (ihA _ hΓ) (ihB _ (.rigid (Conv.refl _) hΓ))
   | lam _ _ hle ihA ihf =>
@@ -12860,20 +12894,20 @@ theorem Check.dead_parB (hok : Book.Ok β) {sp : List Term}
     cases hp with
     | qnt => exact Check.at0 Check.qnt
     | dref _ hs _ _ => simp [Term.spine] at hs
-  | qua =>
+  | qua hqb =>
     intro t' hp
     cases hp with
-    | qua => exact Check.at0 Check.qua
+    | qua => exact Check.at0 (Check.qua hqb)
     | dref _ hs _ _ => simp [Term.spine] at hs
   | min ha hb iha ihb =>
     subst hq; intro t' hp
     cases hp with
     | min ha' hb' => exact Check.at0 (Check.min (iha _root_.rfl _ ha') (ihb _root_.rfl _ hb'))
     | minLM hb' => exact ihb _root_.rfl _ hb'
-    | minLN => exact Check.at0 Check.qua
+    | minLN => exact Check.at0 (Check.qua (by decide))
     | minRM ha' => exact iha _root_.rfl _ ha'
-    | minRN => exact Check.at0 Check.qua
-    | minLL => exact Check.at0 Check.qua
+    | minRN => exact Check.at0 (Check.qua (by decide))
+    | minLL => exact Check.at0 (Check.qua (by decide))
     | dref _ hs _ _ => simp [Term.spine] at hs
   | all hA hB ihA ihB =>
     subst hq; intro t' hp
@@ -18032,8 +18066,8 @@ theorem Check.dat_deep (hok : Book.Ok β)
         | Lone =>
           simp only [if_true] at hKF
           exact Check.data_deep_aux hok hP hK _ (Nat.le_refl _) hx (hKF.cnv (hP.kind _ hKle)) hdu
-        | Many =>
-          simp only [reduceCtorEq, if_false] at hKF
+        | Many | Bang =>
+          simp only [reduceCtorEq, if_false, Quant.data] at hKF
           exact Check.data_deep_aux hok hP hK _ (Nat.le_refl _) hx hKF hdu
     refine ⟨fun β' => ?_, fun β' => ?_⟩
     · exact CG.apps (.ctr) (CGs.of_forall fun u hu => (hall u hu).1 β')
@@ -18254,9 +18288,9 @@ theorem CtrOkD.substD (hβ : Book.Closed β) {Γ₁ : Ctx} {b0 : Bind} {w : Term
     have hA' := Check.substD hβ hA h0 (.inl hv) Γ _root_.rfl _root_.rfl
     have hK : Term.subst Γ.length (Term.shiftN Γ.length w)
         (if pn ≤ Γ.length + 1 ∧ q = .Lone then .Typ (Term.shiftN (Γ.length + 1 - pn) G) else .Typ
-            (.Qua q))
+            (.Qua (Quant.data q)))
         = (if pn' ≤ Γ.length ∧ q = .Lone then .Typ (Term.shiftN (Γ.length - pn') G') else .Typ
-            (.Qua q)) := by
+            (.Qua (Quant.data q))) := by
       rcases hcase with ⟨rfl, rfl, rfl⟩ | ⟨pk, hpn, hpn', hG'⟩
       · split <;> rename_i h1 <;> split <;> rename_i h2
         · show Term.Typ _ = Term.Typ _
@@ -18334,7 +18368,7 @@ theorem CtrOkD.fieldsO (hβ : Book.Closed β) :
       ∃ qf F B πx, Insts TS (xs.take j) (.All qf F B) ∧
         Check β (Pol.dead β) L [] .None Λ x F πx u ∧
         ∃ π, Check β (Pol.dead β) (LHS.void β) [] .None Λ F
-          (if qf = .Lone then .Typ G' else .Typ (.Qua qf)) π .Qnt := by
+          (if qf = .Lone then .Typ G' else .Typ (.Qua (Quant.data qf))) π .Qnt := by
   intro xs
   induction xs with
   | nil => intro fn ps TS T0 T1 πs us _ _ _ _ _ j x u hx; simp at hx
@@ -18832,8 +18866,8 @@ theorem ArgsP.ctr_dat (hok : Book.Ok β) (ho : Outer β Γ r ρS ρO) (hρS : �
         .Many)) π' .Qnt :=
       hKF'.cnv (by rw [Ctx.δ_rigid Λ hΛ, Ctx.δ_rigid Λ hΛ]; exact Pol.dead_kind hβ _ hKle)
     exact Dat.of_kind hok hK2 hΛ
-  | Many =>
-    simp only [reduceCtorEq, if_false] at hKF'
+  | Many | Bang =>
+    simp only [reduceCtorEq, if_false, Quant.data] at hKF'
     exact Dat.of_kind hok hKF' hΛ
 
 -- a rigid non-variable, non-constructor head is never pure
@@ -20855,6 +20889,7 @@ theorem Check.fired (hβ : Book.Closed β) {sp : List Term}
     | None => obtain rfl := hx.none_era _root_.rfl; cases hfa; exact .inl _root_.rfl
     | Lone => exact ih hx
     | Many => exact ih hx
+    | Bang => exact ih hx
   | let_v hfv ih =>
     rename_i v r' qb b
     obtain ⟨_, _, _, hv, _, _⟩ := Check.era_let h _root_.rfl _root_.rfl _root_.rfl _root_.rfl
@@ -20862,6 +20897,7 @@ theorem Check.fired (hβ : Book.Closed β) {sp : List Term}
     | None => obtain rfl := hv.none_era _root_.rfl; cases hfv; exact .inl _root_.rfl
     | Lone => exact ih hv
     | Many => exact ih hv
+    | Bang => exact ih hv
   | rwt_e _ ih =>
     obtain ⟨_, _, _, _, _, he⟩ := Check.era_rwt h _root_.rfl _root_.rfl _root_.rfl _root_.rfl
     exact ih he

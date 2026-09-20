@@ -13,6 +13,7 @@ lines its run must print, and the gates run on the mini cluster.
     bend2/main.ts       the CLI; imported, the .bend loader for bun and node
     bend2/base.bend     the base library
     bend2/bend.lean     the core, mechanized in Lean
+    bend2/bang.lean     the ! rules on the core: stated, and what is proved
     bend2/effs/         one file per IO effect, per backend
     bend2/pack/         package.json, tsconfig.json, bun.lock
     bend2/docs/         the papers' Typst sources, the film, gen_pins.ts (the

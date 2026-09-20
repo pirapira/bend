@@ -13,8 +13,11 @@ latest one; the GitHub release carries the same notes.
   parameter and a let only, never a field, a datatype parameter or a
   function type, so no datatype holds a recipe and the wall stands: with a
   `!` field, `In{f: R -> Empty}` rebuilt from its own `f` is omega. At
-  runtime a recipe is a closure over Base's `Unit`. The Lean formalization
-  does not yet model `!`.
+  runtime a recipe is a closure over Base's `Unit`. bend.lean carries the
+  quantity inert, its five claims unchanged; bang.lean states the judgment
+  with the `!` rules and proves that a recipe captures nothing, that no
+  type binds `!`, that a `!` def is never held, and that the base fragment
+  is unchanged; consistency for the extension is stated, not yet proved.
 
 ## 2.0.21 (2026-09-20)
 

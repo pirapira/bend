@@ -3438,11 +3438,15 @@ export function term_infer(book: Book, lhs: LHS, tm: HTerm, qt: Quant, ctx: Ctx,
     }
     // Γ ⊢ A : Kind(q)
     // Γ , x : qA ⊢ B(x) : Type
+    // where q is not !: a def's telescope alone binds ! (def_type_check)
     // ----------------------------------------------- infer-all
     // Γ ⊢ @q x:A -> B : Type
     case "All": {
+      if (tm.q.$ === "Bang") {
+        throw Err(book, ctx, "a - or plain binder (! marks a def's parameter or a let, never a type)", tm, tm.s, lhs.def);
+      }
       const B_ctx = ctx_bind(ctx, d, tm.q, tm.k, tm.A);
-      const A_chk = term_check(book, lhs, tm.A, None(), Typ(Qua(lhs_kind(lhs, quant_kind(tm.q))), tm.s), ctx, d);
+      const A_chk = term_check(book, lhs, tm.A, None(), Typ(Qua(lhs_kind(lhs, tm.q)), tm.s), ctx, d);
       const B_chk = term_check(book, lhs, tm.B(Var(tm.k, d)), None(), Typ(Qua(Lone()), tm.s), B_ctx, d+1);
       return Infer(All(tm.q, tm.k, d, A_chk.tm, B_chk.tm, tm.s), Typ(Qua(Lone()), tm.s), uses_nil());
     }
@@ -3800,6 +3804,26 @@ export function term_check(book: Book, lhs: LHS, tm: HTerm, qt: Quant, ty: HTerm
   throw Err(book, ctx, ty, x_inf.ty, tm.s, lhs.def);
 }
 
+// a def's type: its n leading binders one by one, a ! one asking Type of
+// its domain (a ! binder is reusable at any kind), then the rest as a type;
+// so @!x:A -> B is a def's telescope alone and never a type a term names
+export function def_type_check(book: Book, k: Name, def: Def): void {
+  const lhs: LHS = { t: Ref(k), n: 0, def: k, qs: [], u: def.u };
+  let T = def.T;
+  let ctx = ctx_nil();
+  let d = 0;
+  for (; d < def.n; d++) {
+    const t = term_strip(T);
+    if (t.$ !== "All") {
+      break;
+    }
+    term_check(book, lhs, t.A, None(), Typ(Qua(lhs_kind(lhs, quant_kind(t.q))), t.s), ctx, d);
+    ctx = ctx_bind(ctx, d, t.q, t.k, t.A);
+    T = t.B(Var(t.k, d));
+  }
+  term_check(book, lhs, T, None(), Typ(Qua(Lone())), ctx, d);
+}
+
 // a def's body against its type, entering with { t: Ref k, n: Def.n, qs:
 // the parameter quantities read off T }; a template (Def.x) checks once,
 // its x leading ~ binders peeled off both, each an opaque constant of its
@@ -3883,7 +3907,8 @@ export function def_inst(book: Book, lhs: LHS, tm: Extract<HTerm, { $: "Ref" }>,
 // undefined, and a live reference to a bodiless def errs (infer-ref),
 // so mutual recursion cannot bypass the wall. a def is declared, body
 // null, until its check passes: an unchecked body never unfolds, a
-// declared ref is stuck. a def checks its type against Type, then its
+// declared ref is stuck. a def checks its type as a telescope
+// (def_type_check: its ! binders live there alone), then its
 // tree against it (def_check); an ADT checks its signature against Type
 // and reads its declared kind Kind(G) off the tip, then checks every
 // constructor telescope domain (parameters, then fields) in the real
@@ -3966,7 +3991,7 @@ export function book_valid(book: Book, done: number = 0): void {
     }
     book.tlds[k] = dec;
     const def = fin ? tld : dec;
-    term_check(book, { t: Ref(k), n: 0, def: k, qs: [], u: def.u }, def.T, None(), Typ(Qua(Lone())), ctx_nil(), 0);
+    def_type_check(book, k, def);
     if (def.i) {
       let tel = term_strip(def.T);
       for (let d = 0; tel.$ === "All"; d++) {
