@@ -46,6 +46,7 @@ allow(/^bend2\/effs\/[a-z0-9_]+\.(c|js)$/, 4000);
 allow(/^bend2\/pack\/(\.gitignore|package\.json|tsconfig\.json|bun\.lock)$/, 1000);
 allow(/^bend2\/docs\/(BendRT|BendTT)\/(main\.typ|refs\.bib)$/, 60000);
 allow("bend2/docs/bend.sublime-syntax", 1000);
+allow("bend2/docs/prop.md", 6000);
 allow("bend2/docs/gen_anim.ts", 7500);
 allow("bend2/docs/gen_charts.ts", 4000);
 allow("bend2/docs/gen_gifs.ts", 4000);
