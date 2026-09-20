@@ -15,7 +15,7 @@ lines its run must print, and the gates run on the mini cluster.
     bend2/bend.lean     the core, mechanized in Lean
     bend2/effs/         one file per IO effect, per backend
     bend2/pack/         package.json, tsconfig.json, bun.lock
-    bend2/docs/         the papers' Typst sources, the film, gen_pins.ts (the
+    bend2/docs/         prop.md, the Prop and ! RFC; the papers' Typst sources, the film, gen_pins.ts (the
                         record pins on this Mac), gen_charts.ts (the landing
                         page's and the film's numbers), gen_gifs.ts (the images)
     bench/runtime/      one dir per bench: main.bend and its twins (C, TS, Lean)
