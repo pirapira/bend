@@ -26,8 +26,8 @@ def main():
   val(x)
 
 #|Error:
-#|- expected : a term
-#|- observed : '!'
+#|- expected : a name after ! (a ! let binds a name: !x = v)
+#|- observed : '['
 #|Location:
 #|23 | def main():
 #|24>|   h = (![0:PW{3,4}, _:PW{1,2}; 1] : [:P])

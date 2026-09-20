@@ -15,8 +15,8 @@ def main():
   0
 
 #|Error:
-#|- expected : a term
-#|- observed : '!'
+#|- expected : a name after ! (a ! let binds a name: !x = v)
+#|- observed : '['
 #|Location:
 #|13 | def main():
 #|14>|   m = (![0:P5{1,2}, 100000:P5{3,4}, _:N5{}; 131072] : [:P5])

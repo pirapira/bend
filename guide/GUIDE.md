@@ -221,6 +221,34 @@ write `+` where you need the copies, and `replicate` pays for them with a
 reference count at runtime. Matching a `+` value hands out `+` fields; on a
 plain one, write `+r` in the pattern to make a field reusable.
 
+A fourth mark, `!`, makes a parameter reusable at any kind, a function or a
+proof included, and moves the cost to the caller: the argument must be closed.
+
+```python
+import Base
+
+# !f: reusable, though a function; its argument names no live variable
+def twice(!f: U32 -> U32, x: U32) -> U32:
+  f(f(x))
+
+def inc(x: U32) -> U32:
+  (x + 1 : U32)
+
+def main() -> U32:
+  !add : U32 -> U32 = x => (x + 2 : U32)   # a ! let: its value is closed too
+  (twice(inc, 1) + twice(add, 1) : U32)
+```
+
+A `!` argument is a recipe: a closed term (it may name defs and erased
+variables, nothing else) that the callee, or the body of a `!` let, may run any
+number of times, as it may call a def. A `!` variable passes on to another `!`
+binder as itself, but never enters a closure, and a def with a `!` parameter is
+called, never passed as a value: `!` marks a def or law parameter and a let,
+never a field, a datatype parameter or a function type. That is what keeps the
+wall standing: no datatype ever holds a recipe, so nothing of a negative type is
+copied. A `!` value is not matched on directly; pass it to a def that matches
+it. `!` needs Base: at runtime a recipe is a closure over `Unit`.
+
 ### Kinds
 
 Every type has a kind, which caps how many times its values may be used.
@@ -522,11 +550,11 @@ import Base                              # the prelude
 import ./file.bend as M                  # a module; its defs are M.x
 type D<a, -A: Kind(a)> is Kind(a):       # a datatype and its kind
   K{x: A, xs: List<a, A>}                # one constructor per line
-def f(x: A, -y: B, +z: C) -> T:          # a def; the body follows
+def f(x: A, -y: B, +z: C, !w: D) -> T:   # a def; the body follows
 def f(x, y):                             # fills the law named f
 def t(~g: A -> B, x: A) -> B:            # a template
 law f:                                   # a claim, proven by def f
-  for x: A                               # a parameter (also for -x, for +x)
+  for x: A                               # a parameter (also for -x, +x, !x)
   for y: B where P(y)                    # y is then the pair (y, P(y) proof)
   exs z: C                               # a witness the proof must return
   T                                      # the claim
@@ -551,6 +579,7 @@ D<A>  +D<A>  D<&2, A>                    # a datatype; + makes it reusable
 42  1.5  3n  'c'  "s"                    # U32, F32, Nat, Char, String
 [a, b]  h <> t  (a, b)                   # a list, a cons, a tuple
 K{a, b}  x => e  +x => e                 # a constructor, a lambda
+x = v; e  +x = v; e  !x = v; e           # a let; reusable; a closed recipe
 f(a, b)  f!(a)  t(~g, a)                 # a call, on the GPU, of a template
 (a + b * c : T)  {x : T}                 # operators over T; an annotation
 [v : T*n]  [v : T^d]  a[i]  a[i] <- v    # an array of n or 2^d slots; a read, a write

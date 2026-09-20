@@ -11,8 +11,8 @@ def main():
   0
 
 #|Error:
-#|- expected : a term
-#|- observed : '!'
+#|- expected : a name after ! (a ! let binds a name: !x = v)
+#|- observed : '['
 #|Location:
 #| 9 | def main():
 #|10>|   a = (![70000: 9, _: 1; 131072] : [:U32])

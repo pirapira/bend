@@ -13,8 +13,8 @@ def main():
   x
 
 #|Error:
-#|- expected : a term
-#|- observed : '!'
+#|- expected : a name after ! (a ! let binds a name: !x = v)
+#|- observed : '['
 #|Location:
 #|11 | def main():
 #|12>|   x = (![4294967295:7,_:0;4294967296] : [:U32])@buf[4294967295]

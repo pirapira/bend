@@ -895,9 +895,19 @@ function call_eta(cb: Carb, t: HTerm): HTerm | null {
 // Tele
 // ====
 
+// A ! binder holds a recipe: the checker certifies its argument as a
+// closure over Unit (_ => a) and a use as x(Unit{}), so here its domain
+// is @_:Unit -> A, a closure like any other (bend.ts Bang).
+function bang_dom(q: Bend.Quant, A: HTerm): HTerm {
+  return q.$ === "Bang" ? Bend.bang_type(A) : A;
+}
+
 function tele_unbind(book: Bend.Book,
   T: HTerm): ReturnType<typeof Bend.tele_unbind> {
-  return memo(TELES, T, () => Bend.tele_unbind(book, T));
+  return memo(TELES, T, () => {
+    const { doms, ret } = Bend.tele_unbind(book, T);
+    return { doms: doms.map(([q, k, A]): Dom => [q, k, bang_dom(q, A)]), ret };
+  });
 }
 
 // Ty
@@ -913,7 +923,8 @@ function ty_wnf(book: Bend.Book, ty: HTerm | null): HTerm | null {
 }
 
 function ty_all(book: Bend.Book, ty: HTerm | null): HAll | null {
-  return ty && Bend.tele_open(book, ty);
+  const all = ty && Bend.tele_open(book, ty);
+  return all?.q.$ === "Bang" ? { ...all, A: bang_dom(all.q, all.A) } : all;
 }
 
 function ty_peel(tm: HTerm,

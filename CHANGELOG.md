@@ -3,6 +3,19 @@
 Each release names what changed for a user. `bend update` installs the
 latest one; the GitHub release carries the same notes.
 
+## Unreleased
+
+- A `!` binder, the exponential: `def twice(!f: U32 -> U32, x: U32)` reuses
+  `f` though a function is `Type`, and the caller pays with a closed
+  argument, a recipe the callee may run any number of times as it may call
+  a def. A `!` variable passes on to another `!` binder as itself; a `!`
+  let, `!x = v`, binds a closed value the same way. `!` marks a def or law
+  parameter and a let only, never a field, a datatype parameter or a
+  function type, so no datatype holds a recipe and the wall stands: with a
+  `!` field, `In{f: R -> Empty}` rebuilt from its own `f` is omega. At
+  runtime a recipe is a closure over Base's `Unit`. The Lean formalization
+  does not yet model `!`.
+
 ## 2.0.21 (2026-09-20)
 
 - A template instance that calls back into an instance whose body is

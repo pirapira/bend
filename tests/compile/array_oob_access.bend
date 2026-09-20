@@ -12,8 +12,8 @@ def main():
   wrd@w1[5] <- 99
 
 #|Error:
-#|- expected : a term
-#|- observed : '!'
+#|- expected : a name after ! (a ! let binds a name: !x = v)
+#|- observed : '['
 #|Location:
 #|10 | def main():
 #|11>|   wrd = (![0: 10, 1: 20, _: 7; 2] : [:U32])

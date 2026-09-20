@@ -21,8 +21,8 @@ def main():
   f(2n)
 
 #|Error:
-#|- expected : a term
-#|- observed : '!'
+#|- expected : a name after ! (a ! let binds a name: !x = v)
+#|- observed : ':'
 #|Location:
 #|10 | def f(n):
 #|11>|   match n!:

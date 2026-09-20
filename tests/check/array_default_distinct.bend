@@ -18,8 +18,8 @@ def main():
   0
 
 #|Error:
-#|- expected : a term
-#|- observed : '!'
+#|- expected : a name after ! (a ! let binds a name: !x = v)
+#|- observed : '['
 #|Location:
 #| 8 | law bad:
 #| 9>|   {![0:1, _:7; 1] == ![0:1, _:8; 1] : [:U32]}

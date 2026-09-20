@@ -27,8 +27,8 @@ def main():
   0
 
 #|Error:
-#|- expected : a term
-#|- observed : '!'
+#|- expected : a name after ! (a ! let binds a name: !x = v)
+#|- observed : '['
 #|Location:
 #|18 | def dupt(x):
 #|19>|   old = ![_:x; 1]@buf[0] <- TokB{}

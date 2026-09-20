@@ -14,8 +14,8 @@ def main():
   (x + x : U32)
 
 #|Error:
-#|- expected : a term
-#|- observed : '!'
+#|- expected : a name after ! (a ! let binds a name: !x = v)
+#|- observed : '['
 #|Location:
 #|11 | def main():
 #|12>|   b = (![0:5, _:0; 1] : [:U32])

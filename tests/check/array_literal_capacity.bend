@@ -21,8 +21,8 @@ def main():
   go(7)
 
 #|Error:
-#|- expected : a term
-#|- observed : '!'
+#|- expected : a name after ! (a ! let binds a name: !x = v)
+#|- observed : '['
 #|Location:
 #|11 | def go(a):
 #|12>|   old = ![_:9; 1]@m[0] <- 5

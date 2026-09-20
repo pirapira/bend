@@ -12,6 +12,7 @@
 //   | "-"
 //   | ""
 //   | "+"
+//   | "!"
 //
 // Bind ::=
 //   | Quant Name ":" Term
@@ -41,7 +42,7 @@
 //
 // Case   ::= "case" [Term] ":" Body
 // Match  ::= "match" [Term] ":" [Case]
-// Local  ::= (Quant Name | Term)+ "=" Term+ ";"? Body
+// Local  ::= (Quant Name | Term)+ "=" Term+ ";"? Body   (also "!" Name)
 // Reply  ::= Term
 // Body   ::= Match | Local | Reply
 // Ctr    ::= Name "{" [Bind ","?] "}"
@@ -225,6 +226,22 @@
 // erased columns skipped. trusted claims: subject reduction (for
 // by-value reduction), progress, weak normalization of closed live
 // terms, no closed live inhabitant of Empty.
+// a ! binder (!x, the exponential) is reusable at any kind, and pays for
+// it at the call: its argument is closed, using no live variable of the
+// caller (an erased one is fine), or is a ! variable passed on; so its
+// value is a recipe, a closed term the callee may run any number of
+// times, as a def is. ! marks a def's parameter (a law's clause) or a let, never a
+// type: no field, no datatype parameter, no @!x:A -> B, so a def with a
+// ! parameter is called, never held, and no datatype carries a recipe.
+// that is the wall's condition for !: a value of a negative datatype is
+// never copied, since one reaches a ! binder only as a closed term, and
+// a closed term names earlier defs (a self-reference as a value is
+// refused), so the recursion of the book stays the descent's. with a !
+// field, or a ! type, omega returns: In{f: R -> Empty} rebuilt from its
+// own f, or applied to a ! x that holds it. the compiler runs a ! as a
+// closure over Unit: the argument is _ => a, a use is x(Unit{}), so a
+// recipe re-runs per use and a shared one owns nothing (Base's Unit, so
+// ! needs Base). a ! scrutinee is refused: a recipe is no value.
 // an @unsafe def opts out of the wall: its self-calls skip descent
 // and its binder domains form + at any kind, so the claims above do
 // not cover a book that uses one. a hole ?name fails every check,
@@ -263,7 +280,8 @@ export type List<Item> = { k: U32; v: Item; n: List<Item> } | null;
 export type Quant =
   | { $: "None" }
   | { $: "Lone" }
-  | { $: "Many" };
+  | { $: "Many" }
+  | { $: "Bang" };
 
 // Uses
 export type Uses = PMap<Quant>;
@@ -461,6 +479,10 @@ export function Many(): Quant {
   return { $: "Many" };
 }
 
+export function Bang(): Quant {
+  return { $: "Bang" };
+}
+
 // Infer
 // -----
 
@@ -589,10 +611,16 @@ export function quant_add(a: Quant, b: Quant): Quant {
   if (b.$ === "None") {
     return a;
   }
+  if (a.$ === "Bang" || b.$ === "Bang") {
+    return Bang();
+  }
   return Many();
 }
 
 export function quant_join(a: Quant, b: Quant): Quant {
+  if (a.$ === "Bang" || b.$ === "Bang") {
+    return Bang();
+  }
   if (a.$ === "Many" || b.$ === "Many") {
     return Many();
   }
@@ -607,6 +635,12 @@ export function quant_dem(q: Quant, qt: Quant): Quant {
     return None();
   }
   return qt;
+}
+
+// the kind a binder of quantity q asks of its domain: a ! binder is
+// reusable at any kind, so it asks Type, as a plain binder does
+export function quant_kind(q: Quant): Quant {
+  return q.$ === "Bang" ? Lone() : q;
 }
 
 export function quant_used(book: Book, ctx: Ctx, k: Name, q: Quant, u: Quant, s: Span | undefined, def?: Name): void {
@@ -1243,7 +1277,7 @@ function f32_show(x: number): string {
 // ====
 
 export function quant_show(q: Quant): string {
-  return { None: "-", Lone: "", Many: "+" }[q.$];
+  return { None: "-", Lone: "", Many: "+", Bang: "!" }[q.$];
 }
 
 const ESCAPES: Record<string, U32> = {
@@ -1380,7 +1414,7 @@ export function term_show(term: LTerm, top: number = -1, bnd: Name[] = []): stri
         return "Quant";
       }
       case "Qua": {
-        return { None: "&0", Lone: "&1", Many: "&2" }[tm.q.$];
+        return { None: "&0", Lone: "&1", Many: "&2", Bang: "&!" }[tm.q.$];
       }
       case "Min": {
         const s = go(tm.a, 2) + " <&> " + go(tm.b, 2);
@@ -1724,20 +1758,26 @@ export function parse_quant(p: Parse): Quant {
   if (parse_take(p, "+")) {
     return Many();
   }
+  if (parse_take(p, "!")) {
+    return Bang();
+  }
   return Lone();
 }
 
 // Patt
 // ----
 
-export function parse_bind(p: Parse, t: LTerm): PVar {
+export function parse_bind(p: Parse, t: LTerm, bang: Bool = false): PVar {
   if (t.$ !== "Var") {
     parse_fail(p, "a lambda binder (one name: k => body)");
   }
-  return { $: "PVar", k: t.k, i: parse_open(p, t.k), q: t.i < 0 ? Many() : Lone(), s: t.s };
+  if (t.i === -2 && !bang) {
+    throw Err(p.book, ctx_nil(), "a - or + binder here (a ! binder is a let: !x = v)", undefined, t.s);
+  }
+  return { $: "PVar", k: t.k, i: parse_open(p, t.k), q: t.i === -1 ? Many() : t.i === -2 ? Bang() : Lone(), s: t.s };
 }
 
-export function parse_patt(p: Parse, t: LTerm): Patt {
+export function parse_patt(p: Parse, t: LTerm, bang: Bool = false): Patt {
   const book = p.book;
   const lit  = t.$ === "App" ? nat_from_term(t) : null;
   if (lit !== null) {
@@ -1751,7 +1791,7 @@ export function parse_patt(p: Parse, t: LTerm): Patt {
       if (book_ctr(book, parse_reso(p, t.k)) !== null) {
         throw Err(book, ctx_nil(), "a braced constructor pattern (" + t.k + " is a constructor: write " + t.k + "{}, or rename the binder)", undefined, t.s);
       }
-      return parse_bind(p, t);
+      return parse_bind(p, t, bang);
     }
     case "Ctr": {
       const ctr = book_ctr(book, t.k);
@@ -1856,6 +1896,18 @@ export function parse_term_base(p: Parse, beg: Loc): LTerm {
       }
       const xs = t.$ === "ADT" ? t.x : Array.from({ length: tld.n }, (): LTerm => Qua(Lone(), s));
       return ADT(k, xs.map((x, i) => i < tld.g ? Qua(Many(), s) : x), s);
+    }
+    case "!": {
+      parse_bump(p);
+      if (!char_is_head(parse_peek(p))) {
+        parse_fail(p, "a name after ! (a ! let binds a name: !x = v)");
+      }
+      const t = parse_term(p, 12);
+      const s = parse_span(p, beg);
+      if (t.$ !== "Var" || p.book.tlds[parse_reso(p, t.k)] !== undefined) {
+        parse_fail(p, "a name after ! (a ! let binds a name: !x = v)");
+      }
+      return Var(t.k, -2, s);
     }
     case "\\": {
       parse_bump(p);
@@ -2081,7 +2133,7 @@ export function parse_term_ops(p: Parse, tm: LTerm, lvl: number): LTerm {
       const ts: LTerm[] = [];
       for (parse_skip(p); x > 0 && parse_at(p, "~"); parse_skip(p)) {
         if (ts.length === x) {
-          parse_fail(p, "a term (" + out.k + " takes " + String(x) + " ~)");
+          parse_fail(p, "a term (" + (out as Extract<LTerm, { $: "Ref" | "Var" }>).k + " takes " + String(x) + " ~)");
         }
         parse_bump(p);
         ts.push(parse_term(p));
@@ -2226,6 +2278,9 @@ export function parse_term_all(p: Parse, exi: boolean): LTerm {
   const beg = p.pos;
   parse_bump(p);
   const q = exi ? Lone() : parse_quant(p);
+  if (q.$ === "Bang") {
+    parse_fail(p, "a - or plain binder (! marks a def's parameter or a let, never a type)");
+  }
   const k = parse_name(p);
   parse_eat(p, ":");
   const A = parse_term(p, 1);
@@ -2373,7 +2428,7 @@ export function parse_body(p: Parse, col: number = 0): Body {
   const vs: LTerm[] = [];
   let ts: LTerm[] = [q.$ === "None" ? Var(parse_name(p), 0, parse_span(p, beg)) : parse_term(p)];
   parse_skip(p);
-  while (!parse_nl(p) && (char_is_head(parse_peek(p)) || q.$ === "Lone" && parse_at(p, "+")) && !KEYWORDS.has(p.str.slice(p.pos).match(/^[A-Za-z0-9_.]*/)?.[0] ?? "")) {
+  while (!parse_nl(p) && (char_is_head(parse_peek(p)) || q.$ === "Lone" && (parse_at(p, "+") || parse_at(p, "!") && char_is_head(p.str[p.pos + 1] ?? ""))) && !KEYWORDS.has(p.str.slice(p.pos).match(/^[A-Za-z0-9_.]*/)?.[0] ?? "")) {
     ts.push(parse_term(p));
     parse_skip(p);
   }
@@ -2405,7 +2460,7 @@ export function parse_body(p: Parse, col: number = 0): Body {
     if (ts.length > 1 && x.$ !== "Var") {
       throw Err(p.book, ctx_nil(), "a name (a parallel let binds names; destructure in its body)", undefined, x.s);
     }
-    return parse_patt(p, x);
+    return parse_patt(p, x, true);
   });
   const f = parse_body(p, col);
   parse_close(p, n0);
@@ -2457,6 +2512,9 @@ export function parse_tele(p: Parse, close: string, tk: Name[] = []): Array<[Qua
     }
     const ct  = close === ")" && parse_take(p, "~");
     const q   = ct ? None() : parse_quant(p);
+    if (q.$ === "Bang" && close !== ")") {
+      parse_fail(p, "a - or plain binder (! marks a def's parameter or a let, never a field or a datatype parameter)");
+    }
     const beg = p.pos;
     const k   = parse_name(p);
     const s   = parse_span(p, beg);
@@ -3287,6 +3345,10 @@ export function term_infer(book: Book, lhs: LHS, tm: HTerm, qt: Quant, ctx: Ctx,
       const ann = pmap_get(ctx, tm.i);
       if (ann === null) {
         throw Err(book, ctx, "a bound variable", tm, tm.s, lhs.def);
+      } else if (ann.q.$ === "Bang") {
+        bang_unit(book, ctx, tm.s, lhs.def);
+        const x: LTerm = Ann(Var(tm.k, tm.i, tm.s), Var("_", -1, undefined, bang_type(ann.T, tm.s)));
+        return Infer(App(x, Ctr("Unit", [], tm.s), tm.s), ann.T, pmap_set(uses_nil(), tm.i, qt));
       } else {
         return Infer(Var(tm.k, tm.i, tm.s), ann.T, pmap_set(uses_nil(), tm.i, qt));
       }
@@ -3380,7 +3442,7 @@ export function term_infer(book: Book, lhs: LHS, tm: HTerm, qt: Quant, ctx: Ctx,
     // Γ ⊢ @q x:A -> B : Type
     case "All": {
       const B_ctx = ctx_bind(ctx, d, tm.q, tm.k, tm.A);
-      const A_chk = term_check(book, lhs, tm.A, None(), Typ(Qua(lhs_kind(lhs, tm.q)), tm.s), ctx, d);
+      const A_chk = term_check(book, lhs, tm.A, None(), Typ(Qua(lhs_kind(lhs, quant_kind(tm.q))), tm.s), ctx, d);
       const B_chk = term_check(book, lhs, tm.B(Var(tm.k, d)), None(), Typ(Qua(Lone()), tm.s), B_ctx, d+1);
       return Infer(All(tm.q, tm.k, d, A_chk.tm, B_chk.tm, tm.s), Typ(Qua(Lone()), tm.s), uses_nil());
     }
@@ -3388,6 +3450,8 @@ export function term_infer(book: Book, lhs: LHS, tm: HTerm, qt: Quant, ctx: Ctx,
     // Γ ⊢ a : A ~ au
     // where a is dead if q is -, and consumed once otherwise: its
     //       measure adds unscaled (certify-once), a + callee copies it
+    //       a is closed, or a ! variable, if q is ! (term_promote): a
+    //       recipe the callee may run any number of times
     //       f infers with a on its pending spine, for infer-ref's descent
     //       a family head is not a function: infer-ref rejects it,
     //       so D(x) is an error and D<x> the one spelling
@@ -3406,7 +3470,8 @@ export function term_infer(book: Book, lhs: LHS, tm: HTerm, qt: Quant, ctx: Ctx,
       if (f_wnf.$ !== "All") {
         throw Err(book, ctx, "a function type", f_inf.ty, tm.s, lhs.def);
       }
-      const x_chk = term_check(book, lhs, tm.x, quant_dem(f_wnf.q, qt), f_wnf.A, ctx, d);
+      const x_raw = term_check(book, lhs, tm.x, quant_dem(f_wnf.q, qt), f_wnf.A, ctx, d);
+      const x_chk = term_promote(book, lhs, tm.x, x_raw, f_wnf.q, qt, f_wnf.A, ctx, d, tm.x.s ?? tm.s);
       return Infer(App(f_inf.tm, x_chk.tm, tm.s), f_wnf.B(tm.x), uses_add(f_inf.us, x_chk.us));
     }
     // book[k].T = @q1 p1:K1 -> .. -> Kind(G)
@@ -3456,13 +3521,60 @@ export function term_infer(book: Book, lhs: LHS, tm: HTerm, qt: Quant, ctx: Ctx,
 
 // T fits Kind(q); a miss is reported at s, the binder
 export function term_check_kind(book: Book, lhs: LHS, T: HTerm, q: Quant, ctx: Ctx, d: number, s?: Span): void {
-  const kind = Typ<HBody>(Qua(lhs_kind(lhs, q)), s);
+  const kind = Typ<HBody>(Qua(lhs_kind(lhs, quant_kind(q))), s);
   try {
     term_check(book, lhs, T, None(), kind, ctx, d);
   } catch (e) {
     const err = e as Err;
     throw err?.$ === "Err" && err.exp === kind ? { ...err, spn: s ?? err.spn } : e;
   }
+}
+
+// Bang
+// ====
+// a ! binder runs as a closure over Base's Unit: the compiler sees its
+// domain as @_:Unit -> A, an argument as _ => a, and a use as x(Unit{}).
+// the checker types the source (x : A, a : A); only the certified term
+// carries the closure, so no goal ever computes on it.
+
+export function bang_unit(book: Book, ctx: Ctx, s?: Span, def?: Name): void {
+  const u = book.tlds["Unit"];
+  if (u === undefined || u.$ !== "ADT" || u.b !== true) {
+    throw Err(book, ctx, "import Base (a ! binder runs through Base's Unit)", undefined, s, def);
+  }
+}
+
+export function bang_type(A: HTerm, s?: Span): HTerm {
+  return All<HBody>(Lone(), "_", 0, Ref("Unit", s), () => A, s);
+}
+
+// the argument of a ! binder: a ! variable passes as the recipe it holds;
+// any other term is closed (no live use, not even of a ! variable: the
+// recipe is a closure, and one that captures nothing is a static value
+// the runtime shares for free) when the region is live, and is certified
+// as a recipe, _ => a : @_:Unit -> A
+export function term_promote(book: Book, lhs: LHS, x: HTerm, chk: Check, q: Quant, qt: Quant, A: HTerm, ctx: Ctx, d: number, s?: Span): Check {
+  if (q.$ !== "Bang") {
+    return chk;
+  }
+  bang_unit(book, ctx, s, lhs.def);
+  let v = x;
+  while (v.$ === "Ann") {
+    v = v.x;
+  }
+  if (v.$ === "Var" && v.i >= 0 && pmap_get(ctx, v.i)?.q.$ === "Bang") {
+    const tm: LTerm = Ann(Var(v.k, v.i, v.s), Var("_", -1, undefined, bang_type(A, s)));
+    return { tm, us: pmap_set(uses_nil(), v.i, qt) };
+  }
+  if (qt.$ !== "None") {
+    for (const [i, u] of pmap_to_array(chk.us)) {
+      if (u.$ !== "None") {
+        const k = pmap_get(ctx, i)?.k ?? "_";
+        throw Err(book, ctx, "a closed argument for a ! binder (" + k + " is a live variable here: a ! argument names defs and erased variables only, or is a ! variable itself, so it can be run any number of times)", undefined, s, lhs.def);
+      }
+    }
+  }
+  return { tm: Ann(Lam("_", d, chk.tm, s), Var("_", -1, undefined, bang_type(A, s))), us: chk.us };
 }
 
 export function term_check(book: Book, lhs: LHS, tm: HTerm, qt: Quant, ty: HTerm, ctx: Ctx, d: number): Check {
@@ -3504,7 +3616,7 @@ export function term_check(book: Book, lhs: LHS, tm: HTerm, qt: Quant, ty: HTerm
     // Γ ⊢ vj : Aj ~ vuj  (each value in Γ: the binders are parallel)
     // Γ ⊢ Aj : Kind(qj)
     // Γ , x1 : q1A1 , .. , xn : qnAn ⊢ f(x1, .., xn) : T ~ fu
-    // where vj is dead if qj is -
+    // where vj is dead if qj is -, and closed if qj is ! (term_promote)
     //       fu[xj] <= qj
     // ------------------------------------------------------------ check-let
     // Γ ⊢ q1 x1 .. qn xn = v1 .. vn; f : T ~ vu1 + .. + vun + fu - x⃗
@@ -3517,7 +3629,8 @@ export function term_check(book: Book, lhs: LHS, tm: HTerm, qt: Quant, ty: HTerm
         const v_dem = quant_dem(tm.q[j], qt);
         const v_inf = term_infer(book, lhs, tm.v[j], v_dem, ctx, d);
         term_check_kind(book, lhs, v_inf.ty, tm.q[j], ctx, d, tm.s);
-        vx.push(v_inf.tm);
+        const v_chk = term_promote(book, lhs, tm.v[j], { tm: v_inf.tm, us: v_inf.us }, tm.q[j], qt, v_inf.ty, ctx, d, tm.v[j].s ?? tm.s);
+        vx.push(v_chk.tm);
         us = uses_add(us, v_inf.us);
         f_ctx = ctx_bind(f_ctx, d + j, tm.q[j], tm.k[j], v_inf.ty);
       }
@@ -3561,7 +3674,7 @@ export function term_check(book: Book, lhs: LHS, tm: HTerm, qt: Quant, ty: HTerm
     // D.c[k] = @r1 x1:F1 -> .. -> D<p..>
     // Γ ⊢ h : @s1 x1:F1 -> .. -> P(k{x1, .., xn}) ~ hu
     // Γ ⊢ m : @q s:(D - k)<p..> -> P ~ mu
-    // where q is not - in a live region
+    // where q is not - in a live region, and not ! (a recipe is no value)
     //       si = ri · q (a field's quantity times its scrutinee's)
     //       h's lhs steps by k{x1, .., xn} while a parameter remains
     // -------------------------------------------------------------- check-mat
@@ -3582,6 +3695,9 @@ export function term_check(book: Book, lhs: LHS, tm: HTerm, qt: Quant, ty: HTerm
       }
       if (qt.$ !== "None" && t_wnf.q.$ === "None") {
         throw Err(book, ctx, "a live scrutinee (a - scrutinee matches only in a dead region)", undefined, tm.s, lhs.def);
+      }
+      if (t_wnf.q.$ === "Bang") {
+        throw Err(book, ctx, "a - or plain scrutinee (a ! binder is a recipe, not a value: pass it to a def that matches it)", undefined, tm.s, lhs.def);
       }
       const a_wnf = term_wnf(book, t_wnf.A);
       if (a_wnf.$ !== "ADT") {
@@ -3748,7 +3864,7 @@ export function def_inst(book: Book, lhs: LHS, tm: Extract<HTerm, { $: "Ref" }>,
     book.tlds[o] = { ...inst, v: null };
     inst.e = def_check(book, o, inst, z);
     book.tlds[o] = inst;
-  } else if (book.tlds[is[key]].v === null && is[key] !== lhs.def) {
+  } else if ((book.tlds[is[key]] as Def).v === null && is[key] !== lhs.def) {
     throw Err(book, ctx, "a decreasing self-call (arguments are read left to right: each passed unchanged until one shrinks)", tm, tm.s, lhs.def);
   }
   return is[key];

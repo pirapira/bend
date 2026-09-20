@@ -14,8 +14,8 @@ def main():
   0
 
 #|Error:
-#|- expected : a term
-#|- observed : '!'
+#|- expected : a name after ! (a ! let binds a name: !x = v)
+#|- observed : '['
 #|Location:
 #|12 | def main():
 #|13>|   h = (![0:W4{5}, _:W4{7}; 1] : [:W4])
